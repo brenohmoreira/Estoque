@@ -1,6 +1,7 @@
 const { sendRespost } = require("../util/exception")
 const { encryptData } = require("../util/securance")
 const connection = require("./../database/database")
+const jwt = require("jsonwebtoken")
 
 module.exports = {
   login: async (req, res) => {
@@ -15,7 +16,7 @@ module.exports = {
       const password = encryptData(params.password)
 
       const [ result ] = await connection.query(`
-        SELECT email, password 
+        SELECT id, email, password 
           FROM usuario
             WHERE email = '${email}' AND password = '${password}' 
         `)      
@@ -23,7 +24,13 @@ module.exports = {
       if(result.length == 0)
         sendRespost(res, 404, `ERROR: Credentials combination doesn't exist`, null)
 
-      sendRespost(res, 200, `Credentials match found`, result)
+      const id = result.id 
+
+      const token = jwt.sign({ id }, process.env.SECRET_KEY, {
+        expiresIn: process.env.TIME_EXPIRE_TOKEN
+      })  
+
+      sendRespost(res, 200, `Credentials match found`, { auth: true, token })
     }
     catch(err) {
       console.log(`${functionLabel} ERROR: ${err}`)
@@ -58,13 +65,13 @@ module.exports = {
         INSERT INTO usuario (name, email, password)
           VALUES (
             '${name}',
-            '${email}'
+            '${email}',
             '${password}'
           )
       `)
 
-      const id = (await sequelize.query(`SELECT LAST_INSERT_ID() AS id`, {
-        type: sequelize.QueryTypes.SELECT
+      const id = (await connection.query(`SELECT LAST_INSERT_ID() AS id`, {
+        type: connection.QueryTypes.SELECT
       }))[0].id
       
       sendRespost(res, 200, `Account registered`, { id })
@@ -74,5 +81,19 @@ module.exports = {
 
       sendRespost(res, 500, `ERROR: ` + err, null)
     }
+  },
+
+  verifyToken: async (req, res, next) => {
+    const token = req.headers['authorization']
+
+    if(!token) return sendRespost(res, 401, `No token provided`, null)
+
+    jwt.verify(token, process.env.SECRET_KEY, function(err, decoded) {
+      if (err) return sendRespost(res, 500, `Failed to authenticate token`, null)
+    
+      req.userId = decoded.id   
+    })
+    
+    next()
   }
 }
